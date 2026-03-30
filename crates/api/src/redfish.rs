@@ -1947,7 +1947,6 @@ pub mod test_support {
                 .push(RedfishSimAction::SetUtcTimezone);
             Ok(())
         }
-
     }
 
     #[async_trait]
