@@ -193,6 +193,9 @@ impl From<EndpointExplorationReport> for rpc::site_explorer::EndpointExploration
             machine_setup_status: report.machine_setup_status.map(Into::into),
             secure_boot_status: report.secure_boot_status.map(Into::into),
             lockdown_status: report.lockdown_status.map(Into::into),
+            firmware_versions: serde_json::to_value(&report.versions)
+                .and_then(serde_json::from_value)
+                .unwrap_or_default(),
         }
     }
 }
@@ -372,6 +375,21 @@ pub enum PreingestionState {
     Initial,
     RecheckVersions,
     ScriptRunning,
+    BfbRecoveryNeeded {
+        reason: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        host_bmc_ip: Option<IpAddr>,
+    },
+    BfbWaitingForPlatformPowercycle {
+        host_bmc_ip: IpAddr,
+        phase: BfbPlatformPowercyclePhase,
+    },
+    BfbCopyInProgress {
+        started_at: DateTime<Utc>,
+    },
+    BfbInstallationWait {
+        started_at: DateTime<Utc>,
+    },
     InitialReset {
         phase: InitialResetPhase,
         last_time: DateTime<Utc>,
@@ -406,6 +424,14 @@ pub enum PreingestionState {
         reason: String,
     },
     Complete,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum BfbPlatformPowercyclePhase {
+    PowerOff,
+    PowerOn,
+    WaitingForDpuBmc,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1353,6 +1379,10 @@ pub struct EthernetInterface {
     )]
     pub mac_address: Option<MacAddress>,
 
+    /// Redfish `LinkStatus` as reported by the BMC (e.g. LinkUp, LinkDown, NoLink).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link_status: Option<String>,
+
     pub uefi_device_path: Option<UefiDevicePath>,
 }
 
@@ -1413,6 +1443,7 @@ impl From<EthernetInterface> for rpc::site_explorer::EthernetInterface {
             description: interface.description,
             interface_enabled: interface.interface_enabled,
             mac_address: interface.mac_address.map(|mac| mac.to_string()),
+            link_status: interface.link_status,
         }
     }
 }
