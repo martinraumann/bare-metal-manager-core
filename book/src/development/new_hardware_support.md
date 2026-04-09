@@ -136,6 +136,15 @@ The state controller (`crates/api/src/state_controller/machine/handler.rs`) has 
 
 Review `handler.rs` for `bmc_vendor().is_*()` calls and add branches for the new vendor where its behavior differs.
 
+> **Note — target architecture:** Adding branches directly to `handler.rs` is the current
+> process but does not scale as the hardware contributor base grows. Each new branch in a
+> shared code path increases blast radius for all other vendors. A struct-based requirements
+> model (`VendorRequirements`) is under design that would replace this pattern: vendor
+> behavior would be declared as an isolated struct literal rather than added as a branch in
+> shared orchestration code. See the [Vendor Requirements RFC](../design/vendor-requirements/README.md)
+> for the proposal. Until that lands, guard all new branches behind specific vendor/model
+> checks and avoid modifying shared default behavior.
+
 ## Testing with `carbide-admin-cli redfish`
 
 The fastest way to validate libredfish changes against a real BMC is to compile `carbide-admin-cli` with a **local checkout of libredfish** and use the `redfish` subcommand to test specific operations directly, rather than waiting for Site Explorer or the state machine to exercise the code path.

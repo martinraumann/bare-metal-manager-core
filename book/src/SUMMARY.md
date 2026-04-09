@@ -43,6 +43,7 @@
 # Design
 
 - [SPIFFE SVID Design](design/machine-identity/spiffe-svid-sdd.md)
+- [Vendor Requirements RFC](design/vendor-requirements/README.md)
 
 # Development
 
