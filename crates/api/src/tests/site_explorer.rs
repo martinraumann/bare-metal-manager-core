@@ -20,6 +20,8 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use carbide_site_explorer::SiteExplorer;
+use carbide_site_explorer::config::{SiteExplorerConfig, SiteExplorerExploreMode};
 use carbide_uuid::network::NetworkSegmentId;
 use common::api_fixtures::TestEnv;
 use common::api_fixtures::endpoint_explorer::MockEndpointExplorer;
@@ -39,6 +41,7 @@ use model::site_explorer::{
     Chassis, ComputerSystem, EndpointExplorationError, EndpointExplorationReport, EndpointType,
     ExploredDpu, ExploredEndpoint, ExploredManagedHost, PreingestionState, UefiDevicePath,
 };
+use model::switch::SwitchSearchFilter;
 use rpc::forge::GetSiteExplorationRequest;
 use rpc::forge::forge_server::Forge;
 use rpc::site_explorer::{
@@ -47,8 +50,6 @@ use rpc::site_explorer::{
 use rpc::{DiscoveryData, DiscoveryInfo, MachineDiscoveryInfo};
 use tonic::Request;
 
-use crate::cfg::file::{SiteExplorerConfig, SiteExplorerExploreMode};
-use crate::site_explorer::SiteExplorer;
 use crate::tests::common;
 use crate::tests::common::api_fixtures;
 use crate::tests::common::api_fixtures::TestEnvOverrides;
@@ -169,6 +170,8 @@ impl FakePowerShelf {
         }
     }
 
+    /// Builds model input for `add_expected_power_shelf`; `bmc_ip_address` drives the same static
+    /// BMC pre-allocation path as expected machines / switches.
     fn as_expected_power_shelf(&self) -> model::expected_power_shelf::ExpectedPowerShelf {
         model::expected_power_shelf::ExpectedPowerShelf {
             expected_power_shelf_id: None,
@@ -183,6 +186,7 @@ impl FakePowerShelf {
                 labels: HashMap::new(),
             },
             rack_id: None,
+            bmc_retain_credentials: None,
         }
     }
 }
@@ -217,7 +221,7 @@ async fn test_site_explorer_default_pause_ingestion_and_poweron(
     )]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -235,6 +239,7 @@ async fn test_site_explorer_default_pause_ingestion_and_poweron(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     // check the ingestion state of the machine
@@ -422,7 +427,7 @@ async fn test_site_explorer_main(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -445,6 +450,7 @@ async fn test_site_explorer_main(pool: sqlx::PgPool) -> Result<(), Box<dyn std::
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -877,7 +883,7 @@ async fn test_site_explorer_audit_exploration_results(
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 7,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -911,6 +917,7 @@ async fn test_site_explorer_audit_exploration_results(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -1094,7 +1101,7 @@ async fn test_site_explorer_reexplore(
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1117,6 +1124,7 @@ async fn test_site_explorer_reexplore(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -1280,7 +1288,7 @@ async fn test_disable_machine_creation_outside_site_explorer(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut config = common::api_fixtures::get_config();
     config.site_explorer = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1361,7 +1369,7 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 10,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1384,6 +1392,7 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     // Create expected_machine entry for host1 w.o fallback_dpu_serial_number
@@ -1428,6 +1437,9 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
+                bmc_retain_credentials: None,
+                dpu_mode: Default::default(),
             },
         },
     )
@@ -1476,6 +1488,9 @@ async fn test_fallback_dpu_serial(pool: sqlx::PgPool) -> Result<(), Box<dyn std:
         host_nics: vec![],
         rack_id: None,
         dpf_enabled: Some(true),
+        bmc_ip_address: None,
+        bmc_retain_credentials: None,
+        dpu_mode: Default::default(),
     };
     db::expected_machine::update(&mut txn, &host1_expected_machine).await?;
     txn.commit().await?;
@@ -1577,7 +1592,7 @@ async fn test_site_explorer_health_report(
     txn.commit().await.unwrap();
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 10,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1600,6 +1615,7 @@ async fn test_site_explorer_health_report(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     // Run site explorer and check the health state of the Machine
@@ -2151,7 +2167,7 @@ async fn test_site_explorer_unknown_vendor(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -2175,6 +2191,7 @@ async fn test_site_explorer_unknown_vendor(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -2368,7 +2385,7 @@ async fn test_machine_creation_with_sku(
     ]);
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 10,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -2391,6 +2408,7 @@ async fn test_machine_creation_with_sku(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     // Create expected_machine entry for host1 w.o fallback_dpu_serial_number
@@ -2435,6 +2453,9 @@ async fn test_machine_creation_with_sku(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
+                bmc_retain_credentials: None,
+                dpu_mode: Default::default(),
             },
         },
     )
@@ -2568,6 +2589,9 @@ async fn test_expected_machine_device_type_metrics(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
+                bmc_retain_credentials: None,
+                dpu_mode: Default::default(),
             },
         },
     )
@@ -2589,6 +2613,9 @@ async fn test_expected_machine_device_type_metrics(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
+                bmc_retain_credentials: None,
+                dpu_mode: Default::default(),
             },
         },
     )
@@ -2610,6 +2637,9 @@ async fn test_expected_machine_device_type_metrics(
                 host_nics: vec![],
                 rack_id: None,
                 dpf_enabled: Some(true),
+                bmc_ip_address: None,
+                bmc_retain_credentials: None,
+                dpu_mode: Default::default(),
             },
         },
     )
@@ -2701,7 +2731,7 @@ async fn test_expected_machine_device_type_metrics(
 
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 3, // Explore our 3 machines
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -2724,6 +2754,7 @@ async fn test_expected_machine_device_type_metrics(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     // Run site explorer to collect metrics
@@ -2851,7 +2882,7 @@ async fn test_site_explorer_power_shelf_discovery(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -2872,6 +2903,7 @@ async fn test_site_explorer_power_shelf_discovery(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -2962,6 +2994,7 @@ async fn test_site_explorer_switch_discovery(
             labels: HashMap::new(),
         },
         rack_id: None,
+        bmc_retain_credentials: None,
     };
     db::expected_switch::create(&mut txn, expected_switch).await?;
     txn.commit().await?;
@@ -3005,7 +3038,7 @@ async fn test_site_explorer_switch_discovery(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3025,6 +3058,7 @@ async fn test_site_explorer_switch_discovery(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3061,7 +3095,7 @@ async fn test_site_explorer_switch_discovery(
     );
 
     let mut txn = env.pool.begin().await?;
-    let switches = db::switch::find_all(txn.as_mut()).await?;
+    let switches = db::switch::find_ids(txn.as_mut(), SwitchSearchFilter::default()).await?;
     println!("switches: {:?}", switches);
     txn.commit().await?;
     assert_eq!(switches.len(), 1, "Expected one switch to be created");
@@ -3153,7 +3187,7 @@ async fn test_site_explorer_power_shelf_with_expected_config(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3174,6 +3208,7 @@ async fn test_site_explorer_power_shelf_with_expected_config(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3307,7 +3342,7 @@ async fn test_site_explorer_power_shelf_creation_limit(
     }
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 3,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3328,6 +3363,7 @@ async fn test_site_explorer_power_shelf_creation_limit(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3441,7 +3477,7 @@ async fn test_site_explorer_power_shelf_disabled(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3462,6 +3498,7 @@ async fn test_site_explorer_power_shelf_disabled(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3544,7 +3581,7 @@ async fn test_site_explorer_power_shelf_error_handling(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3565,6 +3602,7 @@ async fn test_site_explorer_power_shelf_error_handling(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -3611,7 +3649,7 @@ async fn test_site_explorer_creates_power_shelf(
     let endpoint_explorer = Arc::new(MockEndpointExplorer::default());
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3631,6 +3669,7 @@ async fn test_site_explorer_creates_power_shelf(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     // Create a power shelf using FakePowerShelf
@@ -3719,12 +3758,7 @@ async fn test_site_explorer_creates_power_shelf(
     // Test power shelf creation
     assert!(
         explorer
-            .create_power_shelf(
-                explored_endpoint.clone(),
-                exploration_report.clone(),
-                &expected_power_shelf,
-                &env.pool,
-            )
+            .create_power_shelf(explored_endpoint.clone(), &expected_power_shelf, &env.pool,)
             .await?
     );
 
@@ -3747,12 +3781,7 @@ async fn test_site_explorer_creates_power_shelf(
     // Test that duplicate creation returns false
     assert!(
         !explorer
-            .create_power_shelf(
-                explored_endpoint,
-                exploration_report,
-                &expected_power_shelf,
-                &env.pool,
-            )
+            .create_power_shelf(explored_endpoint, &expected_power_shelf, &env.pool,)
             .await?
     );
 
@@ -3920,7 +3949,7 @@ async fn test_power_shelf_state_history(
     let endpoint_explorer = Arc::new(MockEndpointExplorer::default());
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -3940,17 +3969,13 @@ async fn test_power_shelf_state_history(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     // Create the power shelf using site explorer
     assert!(
         explorer
-            .create_power_shelf(
-                explored_endpoint.clone(),
-                exploration_report.clone(),
-                &expected_power_shelf,
-                &env.pool,
-            )
+            .create_power_shelf(explored_endpoint.clone(), &expected_power_shelf, &env.pool,)
             .await?
     );
 
@@ -4179,7 +4204,7 @@ async fn test_power_shelf_state_history_multiple(
     let endpoint_explorer = Arc::new(MockEndpointExplorer::default());
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -4199,6 +4224,7 @@ async fn test_power_shelf_state_history_multiple(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     // Create the power shelves using site explorer
@@ -4206,7 +4232,6 @@ async fn test_power_shelf_state_history_multiple(
         explorer
             .create_power_shelf(
                 explored_endpoint1.clone(),
-                exploration_report1.clone(),
                 &expected_power_shelf1,
                 &env.pool,
             )
@@ -4217,7 +4242,6 @@ async fn test_power_shelf_state_history_multiple(
         explorer
             .create_power_shelf(
                 explored_endpoint2.clone(),
-                exploration_report2.clone(),
                 &expected_power_shelf2,
                 &env.pool,
             )
@@ -4402,7 +4426,7 @@ async fn test_power_shelf_state_history_error_handling(
     let endpoint_explorer = Arc::new(MockEndpointExplorer::default());
     let test_meter = TestMeter::default();
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -4422,17 +4446,13 @@ async fn test_power_shelf_state_history_error_handling(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     // Create the power shelf using site explorer
     assert!(
         explorer
-            .create_power_shelf(
-                explored_endpoint.clone(),
-                exploration_report.clone(),
-                &expected_power_shelf,
-                &env.pool,
-            )
+            .create_power_shelf(explored_endpoint.clone(), &expected_power_shelf, &env.pool,)
             .await?
     );
 
@@ -4580,7 +4600,7 @@ async fn test_site_explorer_power_shelf_discovery_with_static_ip(
     );
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 1,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -4601,6 +4621,7 @@ async fn test_site_explorer_power_shelf_discovery_with_static_ip(
         env.common_pools.clone(),
         env.api.work_lock_manager_handle.clone(),
         env.rms_sim.as_rms_client(),
+        env.test_credential_manager.clone(),
     );
 
     explorer.run_single_iteration().await.unwrap();
@@ -4729,6 +4750,86 @@ async fn test_get_machine_position_info_no_endpoint(
     assert_eq!(info.compute_tray_index, None);
     assert_eq!(info.topology_id, None);
     assert_eq!(info.revision_id, None);
+
+    Ok(())
+}
+
+/// Integration regression guard for the auto-correct path: when an
+/// `ExpectedMachine` declares `DpuMode::NicMode` but the discovered DPU
+/// hardware is reporting `nic_mode: Dpu`, site-explorer should call
+/// `set_nic_mode(Nic)` on the DPU during its per-host matching loop.
+///
+/// This exercises the full wire (site-explorer iteration → per-host mode
+/// resolution → `check_and_configure_dpu_mode` → mock Redfish
+/// `set_nic_mode`) that the unit tests only cover in pieces.
+#[crate::sqlx_test]
+async fn test_site_explorer_auto_corrects_nic_mode_per_expected_machine(
+    pool: sqlx::PgPool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use libredfish::model::oem::nvidia_dpu::NicMode;
+    use model::expected_machine::{DpuMode, ExpectedMachine, ExpectedMachineData};
+
+    let env = common::api_fixtures::create_test_env(pool).await;
+
+    // DPU hardware reports DPU mode (so it looks like a "properly
+    // configured" DPU to the BF3-DPU heuristic) -- the operator-declared
+    // override is what forces the correction to NIC mode.
+    let dpu_config = common::api_fixtures::dpu::DpuConfig {
+        nic_mode: Some(NicMode::Dpu),
+        ..Default::default()
+    };
+    let mock_host =
+        common::api_fixtures::managed_host::ManagedHostConfig::with_dpus(vec![dpu_config.clone()]);
+    let host_bmc_mac = mock_host.bmc_mac_address;
+
+    // Seed an ExpectedMachine with `dpu_mode: NicMode` that matches the
+    // mock host's BMC MAC. Site-explorer's per-host resolution will look
+    // this up by IP via the expected-endpoint index after DHCP assigns
+    // the host its BMC IP.
+    let mut txn = env.pool.begin().await?;
+    db::expected_machine::create(
+        &mut txn,
+        ExpectedMachine {
+            id: None,
+            bmc_mac_address: host_bmc_mac,
+            data: ExpectedMachineData {
+                bmc_username: "ADMIN".to_string(),
+                bmc_password: "PASS".to_string(),
+                serial_number: "EM-866-NIC-OVERRIDE".to_string(),
+                metadata: model::metadata::Metadata::new_with_default_name(),
+                dpu_mode: DpuMode::NicMode,
+                ..Default::default()
+            },
+        },
+    )
+    .await?;
+    txn.commit().await?;
+
+    // Drive the same ingestion flow as the singledpu fixture test: BMC
+    // DHCP for host + DPU, seed mock exploration results, run site-
+    // explorer iteration. We don't care about the final managed host
+    // state here -- we only care that `set_nic_mode` was called with the
+    // right target during the matching loop.
+    common::api_fixtures::site_explorer::MockExploredHost::new(&env, mock_host)
+        .discover_dhcp_host_bmc(|_, _| Ok(()))
+        .await?
+        .discover_dhcp_dpu_bmc(0, |_, _| Ok(()))
+        .await?
+        .insert_site_exploration_results()?
+        // First iteration: initial endpoint exploration.
+        .run_site_explorer_iteration()
+        .await
+        .mark_preingestion_complete()
+        .await?
+        // Second iteration: per-host DPU matching + check_and_configure_dpu_mode.
+        .run_site_explorer_iteration()
+        .await;
+
+    let calls = env.endpoint_explorer.set_nic_mode_calls.lock().unwrap();
+    assert!(
+        calls.iter().any(|(_, mode)| *mode == NicMode::Nic),
+        "expected at least one set_nic_mode(Nic) call triggered by the operator's NicMode declaration; calls so far: {calls:?}"
+    );
 
     Ok(())
 }

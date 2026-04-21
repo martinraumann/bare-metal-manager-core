@@ -20,6 +20,9 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use carbide_site_explorer::MachineCreator;
+use carbide_site_explorer::config::SiteExplorerConfig;
+use carbide_site_explorer::errors::SiteExplorerError;
 use carbide_uuid::machine::MachineId;
 use itertools::Itertools;
 use mac_address::MacAddress;
@@ -34,9 +37,7 @@ use rpc::{BlockDevice, DiscoveryData, DiscoveryInfo, MachineDiscoveryInfo};
 use tonic::Request;
 use utils::models::arch::CpuArchitecture;
 
-use crate::CarbideError;
-use crate::cfg::file::{DpuConfig as InitialDpuConfig, SiteExplorerConfig};
-use crate::site_explorer::MachineCreator;
+use crate::cfg::file::DpuConfig as InitialDpuConfig;
 use crate::state_controller::machine::handler::MachineStateHandlerBuilder;
 use crate::tests::common;
 use crate::tests::common::api_fixtures::TestEnvOverrides;
@@ -56,7 +57,7 @@ async fn test_site_explorer_reject_zero_dpu_hosts(
     .await;
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -73,6 +74,7 @@ async fn test_site_explorer_reject_zero_dpu_hosts(
         explorer_config,
         env.common_pools.clone(),
         None,
+        env.test_credential_manager.clone(),
     );
 
     let host_bmc_mac = MacAddress::from_str("a0:88:c2:08:81:98")?;
@@ -109,7 +111,7 @@ async fn test_site_explorer_reject_zero_dpu_hosts(
         dpus: vec![],
     };
 
-    let Err(CarbideError::NoDpusInMachine(_)) = machine_creator
+    let Err(SiteExplorerError::NoDpusInMachine(_)) = machine_creator
         .create_managed_host(
             &exploration_report,
             &mut EndpointExplorationReport::default(),
@@ -137,7 +139,7 @@ async fn test_site_explorer_creates_managed_host(
     .await;
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -155,6 +157,7 @@ async fn test_site_explorer_creates_managed_host(
         explorer_config,
         env.common_pools.clone(),
         None,
+        env.test_credential_manager.clone(),
     );
 
     let oob_mac = MacAddress::from_str("a0:88:c2:08:80:95")?;
@@ -584,7 +587,7 @@ async fn test_site_explorer_creates_multi_dpu_managed_host(
     let env = common::api_fixtures::create_test_env(pool).await;
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -603,6 +606,7 @@ async fn test_site_explorer_creates_multi_dpu_managed_host(
         explorer_config,
         env.common_pools.clone(),
         None,
+        env.test_credential_manager.clone(),
     );
     let mut txn = env.pool.begin().await.unwrap();
     const NUM_DPUS: usize = 2;
@@ -943,7 +947,7 @@ async fn test_mi_attach_dpu_if_mi_exists_during_machine_creation(
     };
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -962,6 +966,7 @@ async fn test_mi_attach_dpu_if_mi_exists_during_machine_creation(
         explorer_config,
         env.common_pools.clone(),
         None,
+        env.test_credential_manager.clone(),
     );
 
     // Machine interface should not have any machine id associated with it right now.
@@ -1046,7 +1051,7 @@ async fn test_mi_attach_dpu_if_mi_created_after_machine_creation(
     };
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1065,6 +1070,7 @@ async fn test_mi_attach_dpu_if_mi_created_after_machine_creation(
         explorer_config,
         env.common_pools.clone(),
         None,
+        env.test_credential_manager.clone(),
     );
 
     // No way to find a machine_interface using machine id as machine id is not yet associated with
@@ -1155,7 +1161,7 @@ async fn test_site_explorer_creates_managed_host_with_dpf_disable(
     .await;
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1173,6 +1179,7 @@ async fn test_site_explorer_creates_managed_host_with_dpf_disable(
         explorer_config,
         env.common_pools.clone(),
         None,
+        env.test_credential_manager.clone(),
     );
 
     let oob_mac = MacAddress::from_str("a0:88:c2:08:80:95")?;
@@ -1257,7 +1264,7 @@ async fn test_site_explorer_creates_managed_host_with_dpf_disable(
             .create_managed_host(
                 &exploration_report,
                 &mut EndpointExplorationReport::default(),
-                Some(&expected_machine.data),
+                Some(&expected_machine),
                 &env.pool,
             )
             .await?
@@ -1302,7 +1309,7 @@ async fn test_site_explorer_creates_managed_host_with_dpf_enabled(
     .await;
 
     let explorer_config = SiteExplorerConfig {
-        enabled: true,
+        enabled: Arc::new(true.into()),
         explorations_per_run: 2,
         concurrent_explorations: 1,
         run_interval: std::time::Duration::from_secs(1),
@@ -1320,6 +1327,7 @@ async fn test_site_explorer_creates_managed_host_with_dpf_enabled(
         explorer_config,
         env.common_pools.clone(),
         None,
+        env.test_credential_manager.clone(),
     );
 
     let oob_mac = MacAddress::from_str("a0:88:c2:08:80:95")?;
@@ -1404,7 +1412,7 @@ async fn test_site_explorer_creates_managed_host_with_dpf_enabled(
             .create_managed_host(
                 &exploration_report,
                 &mut EndpointExplorationReport::default(),
-                Some(&expected_machine.data),
+                Some(&expected_machine),
                 &env.pool,
             )
             .await?
