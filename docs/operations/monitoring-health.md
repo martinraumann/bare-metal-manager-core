@@ -1,15 +1,15 @@
 # Monitoring and Health
 
-This page describes post-deployment monitoring and health workflows for NICo
-sites. It covers hardware health, DPU health, aggregate host health, health
-overrides, Prometheus scraping, Grafana dashboards, and Loki log lookup.
+This page covers monitoring and health workflows for NICo sites after
+deployment: hardware health, DPU health, aggregate host health, health
+overrides, Prometheus scraping, Grafana dashboards, and Loki queries.
 
 Use aggregate host health as the starting point for operational decisions. NICo
 combines hardware health, DPU health, validation and discovery checks, rack
 health, and health overrides into a single host-level result. Component health
 explains which source is responsible for the aggregate result.
 
-For the underlying health model, see:
+For reference, see:
 
 - [Health Checks and Health Aggregation](../architecture/health_aggregation.md)
 - [Health Probe IDs](../architecture/health/health_probe_ids.md)
@@ -18,8 +18,8 @@ For the underlying health model, see:
 
 ## Health Sources
 
-NICo health is built from health reports. A health report contains successes and
-alerts from a reporting source. The most common health sources are:
+NICo builds health from health reports. A health report contains successes and
+alerts from a reporting source. Common health sources are:
 
 | Source | What it reports |
 |---|---|
@@ -37,8 +37,8 @@ evaluation.
 
 ## Hardware Health Monitoring
 
-NICo monitors hardware through the hardware-health service. The Helm chart is
-named `nico-hardware-health`.
+NICo monitors hardware through the hardware health service. The Helm chart is
+`nico-hardware-health`.
 
 The service discovers BMC endpoints from NICo and queries them through Redfish.
 It monitors host BMCs, DPU BMCs, and configured switch or power-shelf BMCs. The
@@ -47,14 +47,14 @@ firmware, log, NMX-T, NVUE REST, and leak-related data when configured.
 
 ### Helm Configuration
 
-The minimal Helm example enables hardware health:
+Enable hardware health in Helm values:
 
 ```yaml
 nico-hardware-health:
   enabled: true
 ```
 
-The full Helm example also enables its ServiceMonitor:
+Enable metrics scraping with its ServiceMonitor:
 
 ```yaml
 nico-hardware-health:
@@ -67,8 +67,8 @@ nico-hardware-health:
     scrapeTimeout: 25s
 ```
 
-Chart defaults expose hardware-health metrics on port `9009`. The chart also
-sets log collection off by default:
+By default, the chart exposes hardware health metrics on port `9009`. Log
+collection is disabled by default:
 
 ```yaml
 env:
@@ -77,12 +77,11 @@ env:
 
 Enable log collection only through the target site's deployment values.
 
-### Hardware-Health Service Configuration
+### Hardware Health Service Configuration
 
-The example hardware-health service config is
-[`crates/health/example/config.example.toml`](../../crates/health/example/config.example.toml).
-It documents endpoint discovery, sinks, rate limits, collectors, processors,
-and metrics.
+The hardware health service config example,
+`crates/health/example/config.example.toml`, documents endpoint discovery,
+sinks, rate limits, collectors, processors, and metrics.
 
 Production endpoint discovery uses the NICo API source:
 
@@ -105,7 +104,7 @@ username = "admin"
 password = "secret"
 ```
 
-Important collector defaults from the example config:
+Collector defaults from the example config:
 
 | Area | Parameter | Example value | Meaning |
 |---|---:|---|---|
@@ -157,15 +156,15 @@ If numeric threshold data indicates a problem but the BMC reports the sensor as
 healthy, NICo treats the sensor as healthy. In that case the BMC health state is
 the authority.
 
-### Hardware-Health Logs
+### Hardware Health Logs
 
-Use Loki/Grafana Explore to inspect hardware-health logs for a host:
+Use Loki or Grafana Explore to inspect hardware health logs for a host:
 
 ```logql
 {k8s_container_name="nico-hardware-health"} |= "<machine-id>"
 ```
 
-Useful records include `Health report event` lines with fields such as:
+Health report events include fields such as:
 
 ```text
 collector=sensor_collector
@@ -199,7 +198,7 @@ See also:
 
 ### DPU Agent Configuration
 
-Important `nico-dpu-agent` chart values:
+Key `nico-dpu-agent` chart values:
 
 | Config area | Value | Meaning |
 |---|---|---|
@@ -228,7 +227,7 @@ If `dhcp_server.interface_prepend` is set, the chart also adds:
 --dhcp-server-interface-prepend=<prefix>
 ```
 
-The pod sets the following runtime environment:
+The pod sets these runtime environment variables:
 
 | Environment variable | Source / value |
 |---|---|
@@ -258,7 +257,7 @@ Common DPU alert IDs include:
 - `DpuDiskUtilizationCritical`
 - `HeartbeatTimeout`
 
-`HeartbeatTimeout` means NICo has not received a current enough health report
+`HeartbeatTimeout` means NICo has not received a recent health report
 from the DPU agent. Check whether the DPU is powered, the agent is running, DPU
 time is correct, and the DPU can reach NICo.
 
@@ -282,7 +281,7 @@ On the DPU, use `journalctl` for direct service logs:
 journalctl -u <dpu-agent-systemd-unit> -e --no-pager
 ```
 
-Restart the agent when service-level remediation requires it:
+Restart the agent when required:
 
 ```bash
 systemctl restart <dpu-agent-systemd-unit>
@@ -290,9 +289,8 @@ systemctl restart <dpu-agent-systemd-unit>
 
 ## Health Alert Lifecycle
 
-NICo health alerts are source-based. They are not separate tickets that are
-acknowledged independently. A health source submits a fresh report, and NICo
-uses the latest report from each source to calculate aggregate health.
+NICo health alerts are source-based. A health source submits a fresh report, and
+NICo uses the latest report from each source to calculate aggregate health.
 
 A typical alert flow:
 
@@ -306,18 +304,18 @@ A typical alert flow:
    successful or omits the previous alert.
 7. NICo merges the fresh report and aggregate host health returns to healthy.
 
-If a health override created the alert, clear it by removing or replacing the
-override after the operational reason ends.
+If a health override created the alert, remove or replace the override after the
+operational reason ends.
 
 ## Inspect Current Health
 
-Start with the host health page in the Admin Debug UI:
+Start with the host health page in the Admin Web UI:
 
 ```text
 https://<nico-api-hostname>/admin/machine/<machine-id>/health
 ```
 
-Inspect the aggregate health table first. For each alert, record:
+Inspect the aggregate health table first. For each alert, note:
 
 - `ID`
 - `Target`
@@ -326,13 +324,13 @@ Inspect the aggregate health table first. For each alert, record:
 - `Tenant Message`
 - `Classifications`
 
-Then inspect component-level health to identify the source: hardware health, DPU
-health, validation, discovery, rack health, or override.
+Then inspect component health to identify the source: hardware health, DPU
+health, validation, discovery, rack health, or health override.
 
 Use the health history table to review recent transitions. This helps identify
 whether an alert is new, recurring, or already cleared by a later health report.
 
-CLI inspection examples:
+Admin CLI examples:
 
 ```bash
 admin-cli machine show <machine-id>
@@ -345,11 +343,11 @@ Health overrides add manual or service-created health reports into the same
 aggregate health model as automated checks. Overrides are shared health
 mechanisms; they are not specific to hardware health.
 
-Use overrides for controlled operational states such as maintenance, validation,
-repair, break-fix, or temporary automation control. Do not use an override as a
-substitute for fixing the underlying condition.
+Use overrides for controlled states such as maintenance, validation, repair,
+break-fix, or temporary automation control. Do not use an override as a
+substitute for resolving the underlying condition.
 
-### Merge And Replace
+### Merge and Replace
 
 | Override mode | Use |
 |---|---|
@@ -393,9 +391,9 @@ admin-cli machine health-override remove <machine-id> tenant-reported-issue
 ```
 
 Before creating an override, identify the current aggregate health, choose the
-smallest operational effect that matches the workflow, include a clear message,
-and define the condition for removal. After remediation, remove or replace the
-override and verify aggregate health.
+smallest effect that matches the workflow, include a clear message, and define
+the removal condition. After remediation, remove or replace the override and
+verify aggregate health.
 
 ## Prometheus Metrics
 
@@ -419,7 +417,7 @@ nico-hardware-health:
     scrapeTimeout: 25s
 ```
 
-ServiceMonitor inventory from the charts:
+ServiceMonitors from the charts:
 
 | Component | ServiceMonitor | Metrics port |
 |---|---|---:|
@@ -441,9 +439,9 @@ kubectl get servicemonitor -n nico-system nico-hardware-health-metrics
 kubectl get servicemonitor -n nico-system nico-dsx-exchange-consumer-metrics
 ```
 
-Use the Host Health dashboard panels for fleet-level rollups. Useful rollups
-include host health status, health overrides, probe alerts, and alert
-classifications. Query shapes:
+Use the Host Health dashboard panels for fleet-level rollups, including host
+health status, health overrides, probe alerts, and alert classifications. The
+queries use this aggregation pattern:
 
 ```promql
 sum by (healthy, in_use) (
@@ -477,7 +475,7 @@ sum by(classification) (
 )
 ```
 
-Important DPU metrics:
+DPU metric groups:
 
 | Metric group | Use |
 |---|---|
@@ -492,11 +490,11 @@ Important DPU metrics:
 | DPU network monitor errors | Network monitor errors. |
 | DPU communication errors | Communication errors to a destination DPU. |
 
-## Grafana, Loki, And Logs
+## Grafana, Loki, and Logs
 
-Use Grafana dashboards for fleet-level triage and Loki for source-specific log
-lookup. Start from aggregate host health, identify the alert source and
-`inAlertSince`, then query logs around that time.
+Use Grafana dashboards for fleet-level triage and Loki for source-specific logs.
+Start from aggregate host health, identify the alert source and `inAlertSince`,
+then query logs around that time.
 
 Common Loki patterns:
 
@@ -540,7 +538,7 @@ It labels console logs with `machineid` and an SSH console exporter label:
 {machineid="<machine-id>", exporter="<ssh-console-exporter>"}
 ```
 
-Useful labels vary by log source. Use the Loki label browser to choose the most
+Labels vary by log source. Use the Loki label browser to choose the most
 specific label available. Common labels include:
 
 - `k8s_container_name`
