@@ -9,6 +9,11 @@ combines hardware health, DPU health, validation and discovery checks, rack
 health, and health overrides into a single host-level result. Component health
 explains which source is responsible for the aggregate result.
 
+This guide uses NICo for product and service descriptions. Some command names,
+metric names, systemd units, and log labels still use earlier internal names
+because they are part of the current interface. Use the literal names shown in
+commands and queries.
+
 For reference, see:
 
 - [Health Checks and Health Aggregation](../architecture/health_aggregation.md)
@@ -83,14 +88,16 @@ The hardware health service config example,
 `crates/health/example/config.example.toml`, documents endpoint discovery,
 sinks, rate limits, collectors, processors, and metrics.
 
-Production endpoint discovery uses the NICo API source:
+Production endpoint discovery uses the NICo API source. The checked-in
+hardware-health example config currently names that source
+`[endpoint_sources.carbide_api]`:
 
 ```toml
-[endpoint_sources.nico_api]
+[endpoint_sources.carbide_api]
 root_ca = "/var/run/secrets/spiffe.io/ca.crt"
 client_cert = "/var/run/secrets/spiffe.io/tls.crt"
 client_key = "/var/run/secrets/spiffe.io/tls.key"
-api_url = "https://nico-api.nico-system.svc.cluster.local:1079"
+api_url = "https://carbide-api.forge-system.svc.cluster.local:1079"
 ```
 
 Static BMC endpoints are supported for local, mock, or special deployments:
@@ -122,7 +129,7 @@ Collector defaults from the example config:
 | Leak processor | `minimum_alerts_per_report` | `1` | Leak alert threshold for health reports. |
 | Rack leak processor | `leaking_tray_threshold` | `2` | Rack-level leak threshold. |
 | Metrics | `endpoint` | `"0.0.0.0:9009"` | Metrics listener. |
-| Metrics | `prefix` | deployment value | Hardware-health metric prefix. |
+| Metrics | `prefix` | `"carbide_hardware_health"` | Hardware-health metric prefix. |
 
 ### BMC Proxy
 
@@ -183,7 +190,8 @@ report_source=tray-leak-detection
 ## DPU Health Checks
 
 `dpu-agent` runs on managed DPUs and reports DPU health to NICo. The BlueField
-chart is named `nico-dpu-agent`.
+chart is named `nico-dpu-agent`. In service names and logs, the DPU agent
+currently appears as `forge-dpu-agent.service`.
 
 The agent checks DPU service health, networking state, HBN/NVUE configuration,
 DHCP behavior, BGP status, and heartbeat. DPU health is part of aggregate host
@@ -266,25 +274,25 @@ time is correct, and the DPU can reach NICo.
 Use Loki to inspect DPU-agent logs:
 
 ```logql
-{systemd_unit="<dpu-agent-systemd-unit>", machine_id="<machine-id>"}
+{systemd_unit="forge-dpu-agent.service", machine_id="<machine-id>"}
 ```
 
 Alternative labels can be used when available:
 
 ```logql
-{systemd_unit="<dpu-agent-systemd-unit>", host_name="<host-name>"}
+{systemd_unit="forge-dpu-agent.service", host_name="<host-name>"}
 ```
 
 On the DPU, use `journalctl` for direct service logs:
 
 ```bash
-journalctl -u <dpu-agent-systemd-unit> -e --no-pager
+journalctl -u forge-dpu-agent.service -e --no-pager
 ```
 
 Restart the agent when required:
 
 ```bash
-systemctl restart <dpu-agent-systemd-unit>
+systemctl restart forge-dpu-agent.service
 ```
 
 ## Health Alert Lifecycle
@@ -333,8 +341,8 @@ whether an alert is new, recurring, or already cleared by a later health report.
 Admin CLI examples:
 
 ```bash
-admin-cli machine show <machine-id>
-admin-cli machine health-override show <machine-id>
+carbide-admin-cli machine show <machine-id>
+carbide-admin-cli machine health-override show <machine-id>
 ```
 
 ## Health Overrides
@@ -358,7 +366,8 @@ DPU replace overrides are rejected by the API.
 
 ### Override Templates
 
-The NICo admin CLI supports templates for common workflows:
+The `carbide-admin-cli machine health-override add` command supports templates
+for common workflows:
 
 | Template | Use |
 |---|---|
@@ -376,18 +385,18 @@ The NICo admin CLI supports templates for common workflows:
 Examples:
 
 ```bash
-admin-cli machine health-override show <machine-id>
+carbide-admin-cli machine health-override show <machine-id>
 
-admin-cli machine health-override add <machine-id> \
+carbide-admin-cli machine health-override add <machine-id> \
   --template RequestRepair \
   --message "Manual repair trigger for tenant-reported issue"
 
-admin-cli machine health-override add <machine-id> \
+carbide-admin-cli machine health-override add <machine-id> \
   --template OutForRepair \
   --message "Automated repair failed, requires manual investigation"
 
-admin-cli machine health-override remove <machine-id> repair-request
-admin-cli machine health-override remove <machine-id> tenant-reported-issue
+carbide-admin-cli machine health-override remove <machine-id> repair-request
+carbide-admin-cli machine health-override remove <machine-id> tenant-reported-issue
 ```
 
 Before creating an override, identify the current aggregate health, choose the
@@ -439,14 +448,29 @@ kubectl get servicemonitor -n nico-system nico-hardware-health-metrics
 kubectl get servicemonitor -n nico-system nico-dsx-exchange-consumer-metrics
 ```
 
+Core health metrics currently use `carbide_*` metric names. Some dashboards and
+site configurations also expose host-health rollups with the `forge_*` prefix.
+Use the literal metric name that exists in the target site.
+
+Useful core metric families:
+
+| Metric | Use |
+|---|---|
+| `carbide_hosts_health_status_count` | Host health counts split by `healthy` and `in_use`. |
+| `carbide_hosts_health_overrides_count` | Active merge and replace health overrides. |
+| `carbide_hosts_unhealthy_by_probe_id_count` | Active unhealthy hosts by probe ID and probe target. |
+| `carbide_hosts_unhealthy_by_classification_count` | Active unhealthy hosts by health-alert classification. |
+| `carbide_machines_per_state` | Fleet distribution by machine state. |
+| `carbide_machines_per_state_above_sla` | Machines above state-machine SLA. |
+
 Use the Host Health dashboard panels for fleet-level rollups, including host
-health status, health overrides, probe alerts, and alert classifications. The
-queries use this aggregation pattern:
+health status, health overrides, probe alerts, and alert classifications.
+Example dashboard queries:
 
 ```promql
 sum by (healthy, in_use) (
   max by(healthy, in_use) (
-    <host_health_status_count>{fresh="true"}
+    forge_hosts_health_status_count{fresh="true"}
   )
 )
 ```
@@ -454,7 +478,7 @@ sum by (healthy, in_use) (
 ```promql
 sum by(override_type) (
   max by(override_type, in_use) (
-    <host_health_overrides_count>{fresh="true"}
+    forge_hosts_health_overrides_count{fresh="true"}
   )
 )
 ```
@@ -462,7 +486,7 @@ sum by(override_type) (
 ```promql
 sum by(probe_id) (
   max by(probe_id, probe_target) (
-    <host_unhealthy_by_probe_id_count>{fresh="true"}
+    forge_hosts_unhealthy_by_probe_id_count{fresh="true"}
   )
 )
 ```
@@ -470,25 +494,25 @@ sum by(probe_id) (
 ```promql
 sum by(classification) (
   max by(classification, in_use) (
-    <host_unhealthy_by_classification_count>{fresh="true"}
+    forge_hosts_unhealthy_by_classification_count{fresh="true"}
   )
 )
 ```
 
-DPU metric groups:
+DPU metrics:
 
-| Metric group | Use |
+| Metric | Use |
 |---|---|
-| DPU up count | DPUs with recent health reports. |
-| DPU healthy count | DPUs whose latest health report is healthy. |
-| DPU health-check failures | Failed DPU checks by probe. |
-| DPU-agent version distribution | Agent version distribution across DPUs. |
-| DPU firmware version distribution | Firmware version distribution across DPUs. |
-| DPU network reachability | DPU-to-DPU reachability. |
-| DPU network latency | DPU-to-DPU latency. |
-| DPU network packet loss | Packet loss in a DPU network check cycle. |
-| DPU network monitor errors | Network monitor errors. |
-| DPU communication errors | Communication errors to a destination DPU. |
+| `carbide_dpus_up_count` | DPUs with health reports newer than the DPU up threshold. |
+| `carbide_dpus_healthy_count` | DPUs whose latest health report is healthy. |
+| `carbide_dpu_health_check_failed_count` | Failed DPU health checks by probe. |
+| `carbide_dpu_agent_version_count` | DPU-agent version distribution. |
+| `carbide_dpu_firmware_version_count` | DPU firmware version distribution. |
+| `forge_dpu_agent_network_reachable` | DPU-to-DPU reachability. |
+| `forge_dpu_agent_network_latency` | DPU-to-DPU latency. |
+| `forge_dpu_agent_network_loss_percentage` | Packet loss in a DPU network check cycle. |
+| `forge_dpu_agent_network_monitor_error` | Network monitor errors unrelated to connectivity. |
+| `forge_dpu_agent_network_communication_error` | Communication errors to a destination DPU. |
 
 ## API Health and Availability
 
@@ -529,11 +553,18 @@ then query logs around that time.
 Common Loki patterns:
 
 ```logql
-{systemd_unit="<dpu-agent-systemd-unit>", machine_id="<machine-id>"}
+{systemd_unit="forge-dpu-agent.service", machine_id="<machine-id>"}
 ```
 
 ```logql
 {k8s_container_name="nico-hardware-health"} |= "<machine-id>"
+```
+
+Some sites expose machine identity as a log label. When that label is present,
+prefer a label filter over a free-text match:
+
+```logql
+{machine_id="<machine-id>"}
 ```
 
 Console logs are shipped by the `nico-ssh-console-rs` OpenTelemetry Collector
@@ -557,7 +588,7 @@ The sidecar tails:
 It labels console logs with `machineid` and an SSH console exporter label:
 
 ```logql
-{machineid="<machine-id>", exporter="<ssh-console-exporter>"}
+{machineid="<machine-id>", exporter="nico-ssh-console-rs"}
 ```
 
 Labels vary by log source. Use the Loki label browser to choose the most
@@ -576,6 +607,41 @@ specific label available. Common labels include:
 
 `logcli` can be used for repeatable terminal-based Loki queries when direct Loki
 access is configured for the site. Use the same LogQL selectors shown above.
+For example:
+
+```bash
+logcli query --since=1h '{k8s_container_name="nico-hardware-health"} |= "<machine-id>"'
+logcli query --since=1h '{systemd_unit="forge-dpu-agent.service"} |= "<machine-id>"'
+```
+
+### Dashboard Starting Points
+
+Use the site-level health dashboard for fleet triage before drilling into logs.
+Start with these panels when they are available:
+
+| Dashboard area | Use |
+|---|---|
+| Host Health | Site-level host health, probe alerts, classifications, and overrides. |
+| DPU Status | DPU health, heartbeat, version, and firmware distribution. |
+| Hardware Health Monitor Service Metrics | Hardware-health scrape and collector behavior. |
+| Site Explorer | Endpoint discovery and exploration behavior. |
+| Machine Update Manager | Update workflow health and state-machine interaction. |
+
+For host-health triage, the highest-value panels are Healthy Host Percentage,
+Health Status, Health Overrides, Health Probe Alerts, and Health Alert
+Classifications.
+
+## Troubleshooting
+
+| Symptom | Check | Next action |
+|---|---|---|
+| Host is unhealthy with `PoweredOff` | Admin Web UI health page and hardware-health logs around `inAlertSince`. | Confirm BMC power state and whether the alert target is the expected BMC IP. |
+| Host is unhealthy with `HeartbeatTimeout` for `forge-dpu-agent` | `journalctl -u forge-dpu-agent.service -e --no-pager` and Loki query for the DPU agent. | Confirm the DPU is powered, time-synced, and able to reach NICo. Restart `forge-dpu-agent.service` only when service-level remediation requires it. |
+| Host has active overrides | `carbide-admin-cli machine health-override show <machine-id>` and the Health Overrides dashboard panel. | Verify the override reason is still valid. Remove temporary overrides after the condition ends. |
+| Health metrics are missing | `kubectl get servicemonitor -n nico-system` and the component-specific ServiceMonitor. | Enable the chart `serviceMonitor` block or fix the Prometheus selector/namespace match. |
+| Hardware-health logs do not show reports for a host | Loki query for `k8s_container_name="nico-hardware-health"` and the machine ID. | Confirm hardware-health is running, BMC discovery found the endpoint, and the collector is enabled for the source. |
+| DPU health probes fail for BGP, DHCP, or ifreload | DPU-agent logs and DPU Status dashboard panels. | Use the DPU health alert ID to choose the subsystem-specific runbook or service check. |
+| API health inspection or admin pages are unavailable | `kubectl get deploy`, `pods`, and `svc` for `nico-api`; query API logs. | Restore API availability before debugging host-specific health state. |
 
 ## Triage Workflow
 
