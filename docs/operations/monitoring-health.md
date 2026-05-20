@@ -9,11 +9,6 @@ combines hardware health, DPU health, validation and discovery checks, rack
 health, and health overrides into a single host-level result. Component health
 explains which source is responsible for the aggregate result.
 
-This guide uses NICo for product and service descriptions. Some command names,
-metric names, systemd units, and log labels still use earlier internal names
-because they are part of the current interface. Use the literal names shown in
-commands and queries.
-
 For reference, see:
 
 - [Health Checks and Health Aggregation](../architecture/health_aggregation.md)
