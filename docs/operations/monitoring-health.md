@@ -9,6 +9,12 @@ combines hardware health, DPU health, validation and discovery checks, rack
 health, and health overrides into a single host-level result. Component health
 explains which source is responsible for the aggregate result.
 
+Use this page as the entry point for health triage. It gives the primary
+inspection path, commands, metrics, dashboards, and log queries needed to start
+an investigation. For subsystem-specific behavior, follow the linked hardware,
+DPU, health aggregation, and classification references rather than treating this
+page as a replacement for those manuals.
+
 For reference, see:
 
 - [Health Checks and Health Aggregation](../architecture/health_aggregation.md)
